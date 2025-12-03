@@ -549,7 +549,7 @@ fn generate_common_impls(
 	}
 
 	// Extract just the field names for struct construction
-	let field_names = typed_fields.iter().map(|(name, _)| name);
+	let field_names: Vec<_> = typed_fields.iter().map(|(name, _)| name).collect();
 
 	let datapath_impl = quote! {
 		impl ::datapath::Datapath for #struct_name {
@@ -599,6 +599,13 @@ fn generate_common_impls(
 					path: Self { #(#field_names),* },
 					file,
 				})
+			}
+
+			fn field(&self, name: &str) -> Option<::std::string::String> {
+				match name {
+					#(stringify!(#field_names) => Some(self.#field_names.to_string()),)*
+					_ => None,
+				}
 			}
 		}
 	};

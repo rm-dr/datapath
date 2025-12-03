@@ -33,4 +33,8 @@ where
 	/// Parse a string as this datapath with a (possibly empty-string)
 	/// file, returning `None` if this string is invalid.
 	fn parse(path: &str) -> Option<DatapathFile<Self>>;
+
+	/// Get the string value of the field with the given name,
+	/// if it exists.
+	fn field(&self, name: &str) -> Option<String>;
 }
