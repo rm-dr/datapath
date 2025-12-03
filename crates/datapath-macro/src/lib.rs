@@ -343,13 +343,14 @@ fn generate_simple_datapath(
 	segments: &[Segment],
 	attrs: &[syn::Attribute],
 ) -> proc_macro2::TokenStream {
-	let (struct_def, display_impl, datapath_impl) =
+	let (struct_def, display_impl, datapath_impl, from_trait_impls) =
 		generate_common_impls(struct_name, segments, attrs);
 
 	quote! {
 		#struct_def
 		#display_impl
 		#datapath_impl
+		#from_trait_impls
 	}
 }
 
@@ -360,7 +361,7 @@ fn generate_schema_datapath(
 	schema_type: &Type,
 	attrs: &[syn::Attribute],
 ) -> proc_macro2::TokenStream {
-	let (struct_def, display_impl, datapath_impl) =
+	let (struct_def, display_impl, datapath_impl, from_trait_impls) =
 		generate_common_impls(struct_name, segments, attrs);
 
 	// Generate SchemaDatapath implementation
@@ -374,6 +375,7 @@ fn generate_schema_datapath(
 		#struct_def
 		#display_impl
 		#datapath_impl
+		#from_trait_impls
 		#schema_datapath_impl
 	}
 }
@@ -384,6 +386,7 @@ fn generate_common_impls(
 	segments: &[Segment],
 	attrs: &[syn::Attribute],
 ) -> (
+	proc_macro2::TokenStream,
 	proc_macro2::TokenStream,
 	proc_macro2::TokenStream,
 	proc_macro2::TokenStream,
@@ -404,21 +407,25 @@ fn generate_common_impls(
 		}
 	});
 
-	let mut doc_str = String::new();
-	for s in segments {
-		if !doc_str.is_empty() {
-			doc_str.push('/');
-		}
+	// Build pattern string
+	let pattern_str = {
+		let mut s = String::new();
+		for seg in segments {
+			if !s.is_empty() {
+				s.push('/');
+			}
 
-		match s {
-			Segment::Constant(x) => doc_str.push_str(x),
-			Segment::Typed { name, ty } => {
-				doc_str.push_str(&format!("{name}={}", ty.to_token_stream()))
+			match seg {
+				Segment::Constant(x) => s.push_str(x),
+				Segment::Typed { name, ty } => {
+					s.push_str(&format!("{name}={}", ty.to_token_stream()))
+				}
 			}
 		}
-	}
+		s
+	};
 
-	let doc_str = format!("\n\nDatapath pattern: `{doc_str}`");
+	let doc_str = format!("\n\nDatapath pattern: `{pattern_str}`");
 
 	let struct_def = quote! {
 		#(#attrs)*
@@ -441,6 +448,72 @@ fn generate_common_impls(
 			fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
 				write!(f, "{}", vec![#(#display_parts),*].join("/"))
 			}
+		}
+	};
+
+	// Generate tuple types
+	let tuple_type = if typed_fields.is_empty() {
+		quote! { () }
+	} else {
+		let field_types = typed_fields.iter().map(|(_, ty)| ty);
+		quote! { (#(#field_types,)*) }
+	};
+
+	let wildcardable_tuple_type = if typed_fields.is_empty() {
+		quote! { () }
+	} else {
+		let wildcardable_types = typed_fields.iter().map(|(_, ty)| {
+			quote! { ::datapath::Wildcardable<#ty> }
+		});
+		quote! { (#(#wildcardable_types,)*) }
+	};
+
+	// Generate from_tuple implementation
+	let from_tuple_body = if typed_fields.is_empty() {
+		quote! { Self {} }
+	} else {
+		let field_assignments = typed_fields.iter().enumerate().map(|(idx, (name, _))| {
+			let index = syn::Index::from(idx);
+			quote! { #name: tuple.#index }
+		});
+
+		quote! {
+			Self {
+				#(#field_assignments),*
+			}
+		}
+	};
+
+	// Generate to_tuple implementation
+	let to_tuple_body = if typed_fields.is_empty() {
+		quote! { () }
+	} else {
+		let field_names = typed_fields.iter().map(|(name, _)| name);
+		quote! { (#(self.#field_names,)*) }
+	};
+
+	// Generate from_wildcardable implementation
+	let from_wildcardable_body = {
+		let mut parts = Vec::new();
+		let mut field_idx = 0;
+
+		for seg in segments {
+			match seg {
+				Segment::Constant(s) => {
+					parts.push(quote! { #s.to_string() });
+				}
+				Segment::Typed { name, .. } => {
+					let idx = syn::Index::from(field_idx);
+					field_idx += 1;
+					parts.push(quote! {
+						format!("{}={}", stringify!(#name), tuple.#idx)
+					});
+				}
+			}
+		}
+
+		quote! {
+			vec![#(#parts),*].join("/")
 		}
 	};
 
@@ -480,6 +553,23 @@ fn generate_common_impls(
 
 	let datapath_impl = quote! {
 		impl ::datapath::Datapath for #struct_name {
+			const PATTERN: &'static str = #pattern_str;
+
+			type Tuple = #tuple_type;
+			type WildcardableTuple = #wildcardable_tuple_type;
+
+			fn from_tuple(tuple: Self::Tuple) -> Self {
+				#from_tuple_body
+			}
+
+			fn to_tuple(self) -> Self::Tuple {
+				#to_tuple_body
+			}
+
+			fn from_wildcardable(tuple: Self::WildcardableTuple) -> ::std::string::String {
+				#from_wildcardable_body
+			}
+
 			fn with_file(&self, file: impl ::core::convert::Into<::std::string::String>) -> ::datapath::DatapathFile<Self> {
 				::datapath::DatapathFile {
 					path: self.clone(),
@@ -513,7 +603,31 @@ fn generate_common_impls(
 		}
 	};
 
-	(struct_def, display_impl, datapath_impl)
+	// Generate From<Tuple> for Struct
+	let from_tuple_impl = quote! {
+		impl ::core::convert::From<#tuple_type> for #struct_name {
+			fn from(value: #tuple_type) -> Self {
+				<Self as ::datapath::Datapath>::from_tuple(value)
+			}
+		}
+	};
+
+	// Generate From<Struct> for Tuple
+	let from_struct_impl = quote! {
+		impl ::core::convert::From<#struct_name> for #tuple_type {
+			fn from(value: #struct_name) -> Self {
+				<#struct_name as ::datapath::Datapath>::to_tuple(value)
+			}
+		}
+	};
+
+	// Combine both implementations
+	let from_trait_impls = quote! {
+		#from_tuple_impl
+		#from_struct_impl
+	};
+
+	(struct_def, display_impl, datapath_impl, from_trait_impls)
 }
 
 /// The `datapath!` macro generates datapath struct definitions with parsing and formatting logic.
