@@ -1,0 +1,23 @@
+[package]
+name = "datapath-macro"
+description = "Type-safe structured paths with partitions, parsing, and schema associations. Dependency for the `datapath` crate."
+keywords = ["path", "filesystem", "parsing", "typed", "schema"]
+categories = ["filesystem", "data-structures", "parsing"]
+version = { workspace = true }
+rust-version = { workspace = true }
+edition = { workspace = true }
+repository = { workspace = true }
+license = { workspace = true }
+readme = { workspace = true }
+authors = { workspace = true }
+
+[lints]
+workspace = true
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = { workspace = true }
+quote = { workspace = true }
+proc-macro2 = { workspace = true }

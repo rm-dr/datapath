@@ -1,0 +1,21 @@
+[package]
+name = "datapath"
+description = "Type-safe structured paths with partitions, parsing, and schema associations"
+keywords = ["path", "filesystem", "parsing", "typed", "schema"]
+categories = ["filesystem", "data-structures", "parsing"]
+rust-version = { workspace = true }
+edition = { workspace = true }
+version = { workspace = true }
+license = { workspace = true }
+repository = { workspace = true }
+readme = "README.md"
+authors = { workspace = true }
+
+[lints]
+workspace = true
+
+[dependencies]
+datapath-macro = { workspace = true }
+
+[dev-dependencies]
+uuid = { version = "1", features = ["v4"] }
