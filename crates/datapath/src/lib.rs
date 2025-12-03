@@ -7,6 +7,10 @@
 #[cfg(test)]
 use uuid as _;
 
+// silence linter, used by fns in index.rs
+#[cfg(feature = "tokio")]
+use tokio as _;
+
 mod datapath;
 pub use datapath::*;
 
@@ -18,5 +22,11 @@ pub use schema::*;
 
 mod wildcardable;
 pub use wildcardable::*;
+
+#[cfg(feature = "index")]
+mod index;
+
+#[cfg(feature = "index")]
+pub use index::*;
 
 pub use datapath_macro::datapath;

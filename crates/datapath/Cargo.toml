@@ -17,5 +17,16 @@ workspace = true
 [dependencies]
 datapath-macro = { workspace = true }
 
+regex = { workspace = true, optional = true }
+tracing = { workspace = true, optional = true }
+trie-rs = { workspace = true, optional = true }
+itertools = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
+
 [dev-dependencies]
 uuid = { version = "1", features = ["v4"] }
+
+[features]
+default = []
+index = ["dep:regex", "dep:trie-rs", "dep:tracing", "dep:itertools"]
+tokio = ["dep:tokio"]
