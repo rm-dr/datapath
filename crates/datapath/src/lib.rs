@@ -16,4 +16,7 @@ pub use datapathfile::*;
 mod schema;
 pub use schema::*;
 
+mod wildcardable;
+pub use wildcardable::*;
+
 pub use datapath_macro::datapath;

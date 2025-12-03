@@ -42,7 +42,7 @@ match parsed {
 Associate datapaths with schema types for type-safe data handling:
 
 ```rust
-use datapath::datapath;
+use datapath::{datapath, Datapath};
 
 pub struct UserEvent {
     pub action: String,
@@ -60,10 +60,46 @@ datapath! {
 // EventPath::Schema == UserEvent
 ```
 
+## Pattern Introspection and Wildcards
+
+Access the pattern string and work with wildcarded paths:
+
+```rust
+use datapath::{datapath, Datapath, Wildcardable};
+use uuid::Uuid;
+
+datapath! {
+    struct Metrics(metrics/service=String/timestamp=i64/v1);
+}
+
+// Access the pattern string
+// (use for logging/debug)
+assert_eq!(Metrics::PATTERN, "metrics/service=String/timestamp=i64/v1");
+
+// Convert to/from tuples
+let metrics = Metrics {
+    service: "api".to_string(),
+    timestamp: 1234567890,
+};
+let tuple = metrics.clone().to_tuple();
+assert_eq!(tuple, ("api".to_string(), 1234567890i64));
+
+let recreated = Metrics::from_tuple(tuple);
+assert_eq!(recreated.service, "api");
+assert_eq!(recreated.timestamp, 1234567890);
+
+// Create wildcarded paths for querying
+let all_services = Metrics::from_wildcardable((
+    Wildcardable::Star,
+    Wildcardable::Value(1234567890i64),
+));
+assert_eq!(all_services, "metrics/service=*/timestamp=1234567890/v1");
+```
+
 ## Examples
 
 ```rust
-use datapath::datapath;
+use datapath::{datapath, Datapath};
 
 pub struct MetricsSchema;
 
@@ -86,4 +122,30 @@ datapath! {
         schema: MetricsSchema
     };
 }
+```
+
+### Constant-Only Paths
+
+Paths with no typed fields work correctly with empty tuples:
+
+```rust
+use datapath::{datapath, Datapath};
+
+datapath! {
+    struct ConstantPath(assets/data/"v1.0");
+}
+
+// PATTERN works for constant-only paths
+assert_eq!(ConstantPath::PATTERN, "assets/data/v1.0");
+
+// Tuple type is unit ()
+let empty_tuple = ConstantPath {}.to_tuple();
+assert_eq!(empty_tuple, ());
+
+let path = ConstantPath::from_tuple(());
+assert_eq!(format!("{}", path), "assets/data/v1.0");
+
+// from_wildcardable also works (no wildcards possible)
+let path_str = ConstantPath::from_wildcardable(());
+assert_eq!(path_str, "assets/data/v1.0");
 ```
