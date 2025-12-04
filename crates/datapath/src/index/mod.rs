@@ -1,5 +1,6 @@
 use itertools::Itertools;
 use std::{collections::HashMap, fmt::Display, str::FromStr};
+use tracing::trace;
 use trie_rs::map::{Trie, TrieBuilder};
 
 mod rule;
@@ -68,8 +69,8 @@ impl DatapathIndex {
 				Err(_) => continue,
 			};
 
-			// Stop at wildcard constants - can't use for trie prefix search
-			if matches!(segment, PathSegment::Constant(ref s) if s == "*") {
+			// lone stars and double-stars aren't in the trie
+			if matches!(segment, PathSegment::Constant(ref s) if s == "*" || s == "**" ) {
 				break;
 			}
 
@@ -181,8 +182,9 @@ impl DatapathIndex {
 	/// Returns `None` if the query was invalid.
 	pub fn query(&self, query: impl Into<String>) -> Option<impl Iterator<Item = String> + '_> {
 		let query: String = query.into();
-		let regex = rule::Rule::new(query.clone()).regex()?;
+		let regex = rule::Rule::new(query.clone())?;
 		let key = Self::query_to_key(&query);
+		trace!("DatapathIndex key is {key}");
 
 		Some(
 			self.patterns
@@ -193,10 +195,24 @@ impl DatapathIndex {
 		)
 	}
 
+	/// Like [Self::query], but with a precompiled rule
+	pub fn query_rule<'a>(&'a self, rule: &'a rule::Rule) -> impl Iterator<Item = String> + 'a {
+		let key = Self::query_to_key(rule.pattern());
+		trace!("DatapathIndex key is {key}");
+
+		self.patterns
+			.predictive_search::<String, _>(&key)
+			.flat_map(|(_, strings)| strings.iter())
+			.filter(move |s| rule.is_match(s))
+			.cloned()
+	}
+
+	/// Like [Self::query], but returns `true` if any paths match
 	pub fn query_match(&self, query: impl Into<String>) -> Option<bool> {
 		let query: String = query.into();
-		let regex = rule::Rule::new(query.clone()).regex()?;
+		let regex = rule::Rule::new(query.clone())?;
 		let key = Self::query_to_key(&query);
+		trace!("DatapathIndex key is {key}");
 
 		for (_, strings) in self.patterns.predictive_search::<String, _>(&key) {
 			for s in strings {
@@ -207,6 +223,22 @@ impl DatapathIndex {
 		}
 
 		return Some(false);
+	}
+
+	/// Like [Self::query_match], but with a precompiled rule
+	pub fn query_rule_match<'a>(&'a self, rule: &'a rule::Rule) -> bool {
+		let key = Self::query_to_key(&rule.pattern());
+		trace!("DatapathIndex key is {key}");
+
+		for (_, strings) in self.patterns.predictive_search::<String, _>(&key) {
+			for s in strings {
+				if rule.is_match(s) {
+					return true;
+				}
+			}
+		}
+
+		return false;
 	}
 }
 
