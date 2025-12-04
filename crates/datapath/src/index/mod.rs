@@ -4,6 +4,7 @@ use tracing::trace;
 use trie_rs::map::{Trie, TrieBuilder};
 
 mod rule;
+pub use rule::Rule;
 
 /// A path segment in an [`AnyDatapath`]
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
