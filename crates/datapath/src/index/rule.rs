@@ -54,29 +54,28 @@ impl RegexSegment {
 
 #[derive(Debug, Clone)]
 pub struct Rule {
-	pub pattern: String,
+	regex: Regex,
+	pattern: String,
 }
 
 impl Rule {
-	pub fn new(pattern: impl Into<String>) -> Self {
-		Self {
-			pattern: pattern.into(),
-		}
+	pub fn pattern(&self) -> &str {
+		&self.pattern
 	}
 
-	/// Turn this rule into a regex pattern.
-	/// Returns `None` if this rule was invalid.
-	pub fn regex(&self) -> Option<Regex> {
-		let pattern = &self.pattern;
+	pub fn regex(&self) -> &Regex {
+		&self.regex
+	}
 
-		if pattern.ends_with("/") {
-			warn!("Pattern `{pattern}` has a trailing slash which will be ignored")
-		}
+	pub fn is_match(&self, s: &str) -> bool {
+		self.regex.is_match(s)
+	}
 
-		if pattern.starts_with("/") {
-			warn!("Pattern `{pattern}` has a leading slash which will be ignored")
-		}
+	pub fn raw_regex_str(&self) -> String {
+		Self::regex_str(self.pattern()).unwrap()
+	}
 
+	fn regex_str(pattern: &str) -> Option<String> {
 		// Split on slashes or stars
 		// This is a lot like .split("/"), but handles
 		// the edge case where ** is not delimited by slashes
@@ -84,7 +83,7 @@ impl Rule {
 		let segments = {
 			#[expect(clippy::unwrap_used)]
 			let re = Regex::new("[*]{2,}|[/]").unwrap();
-			let split = re.find_iter(pattern);
+			let split = re.find_iter(&pattern);
 
 			let bounds = split
 				.into_iter()
@@ -153,10 +152,29 @@ impl Rule {
 			prev = Some(seg);
 		}
 
+		return Some(re_built);
+	}
+
+	/// Returns `None` if this rule was invalid.
+	pub fn new(pattern: impl Into<String>) -> Option<Self> {
+		let pattern: String = pattern.into();
+
+		if pattern.ends_with("/") {
+			warn!("Pattern `{pattern}` has a trailing slash which will be ignored")
+		}
+
+		if pattern.starts_with("/") {
+			warn!("Pattern `{pattern}` has a leading slash which will be ignored")
+		}
+
+		let re_built = Self::regex_str(&pattern)?;
 		let re_built = format!("^{re_built}$");
+
 		// This regex should always be valid
 		#[expect(clippy::unwrap_used)]
-		Some(Regex::new(&re_built).unwrap())
+		let regex = Regex::new(&re_built).unwrap();
+
+		Some(Self { regex, pattern })
 	}
 }
 
@@ -169,14 +187,9 @@ impl Rule {
 mod rule_tests {
 	use super::*;
 
-	fn rule_regex(pattern: &str) -> Regex {
-		let rule = Rule::new(pattern);
-		return rule.regex().unwrap();
-	}
-
 	#[test]
 	fn simple() {
-		let regex = rule_regex("file.txt");
+		let regex = Rule::new("file.txt").unwrap();
 
 		assert!(regex.is_match("file.txt"));
 		assert!(!regex.is_match("other.txt"));
@@ -185,7 +198,7 @@ mod rule_tests {
 
 	#[test]
 	fn simple_dir() {
-		let regex = rule_regex("dir/file.txt");
+		let regex = Rule::new("dir/file.txt").unwrap();
 
 		assert!(regex.is_match("dir/file.txt"));
 		assert!(!regex.is_match("file.txt"));
@@ -194,7 +207,7 @@ mod rule_tests {
 
 	#[test]
 	fn simple_star() {
-		let regex = rule_regex("*.txt");
+		let regex = Rule::new("*.txt").unwrap();
 
 		assert!(regex.is_match("file.txt"));
 		assert!(regex.is_match("other.txt"));
@@ -204,7 +217,7 @@ mod rule_tests {
 
 	#[test]
 	fn simple_doublestar() {
-		let regex = rule_regex("**/*.txt");
+		let regex = Rule::new("**/*.txt").unwrap();
 
 		assert!(regex.is_match("file.txt"));
 		assert!(regex.is_match("dir/file.txt"));
@@ -215,7 +228,7 @@ mod rule_tests {
 
 	#[test]
 	fn consecutive_doublestar() {
-		let regex = rule_regex("**/**/**/*.txt");
+		let regex = Rule::new("**/**/**/*.txt").unwrap();
 
 		assert!(regex.is_match("file.txt"));
 		assert!(regex.is_match("dir/file.txt"));
@@ -226,7 +239,7 @@ mod rule_tests {
 
 	#[test]
 	fn dual_star() {
-		let regex = rule_regex("**/*a*");
+		let regex = Rule::new("**/*a*").unwrap();
 
 		assert!(regex.is_match("fileafile"));
 		assert!(regex.is_match("dir/fileafile"));
@@ -240,7 +253,7 @@ mod rule_tests {
 
 	#[test]
 	fn single_end() {
-		let regex = rule_regex("**/*");
+		let regex = Rule::new("**/*").unwrap();
 
 		assert!(regex.is_match("file"));
 		assert!(regex.is_match("dir/file"));
@@ -249,7 +262,7 @@ mod rule_tests {
 
 	#[test]
 	fn doublestar_end() {
-		let regex = rule_regex("root/**");
+		let regex = Rule::new("root/**").unwrap();
 
 		assert!(regex.is_match("root/file"));
 		assert!(!regex.is_match("dir/file"));
@@ -257,7 +270,7 @@ mod rule_tests {
 
 	#[test]
 	fn doublestar_start() {
-		let regex = rule_regex("**/dir");
+		let regex = Rule::new("**/dir").unwrap();
 
 		assert!(regex.is_match("dir"));
 		assert!(regex.is_match("a/b/dir"));
@@ -266,7 +279,7 @@ mod rule_tests {
 
 	#[test]
 	fn doublestar_adjacent_before() {
-		let regex = rule_regex("root/**test");
+		let regex = Rule::new("root/**test").unwrap();
 
 		assert!(regex.is_match("root/test"));
 		assert!(regex.is_match("root/a/test"));
@@ -277,7 +290,7 @@ mod rule_tests {
 
 	#[test]
 	fn doublestar_adjacent_after() {
-		let regex = rule_regex("root/test**");
+		let regex = Rule::new("root/test**").unwrap();
 
 		assert!(regex.is_match("root/test"));
 		assert!(regex.is_match("root/test/a"));
@@ -288,7 +301,7 @@ mod rule_tests {
 
 	#[test]
 	fn doublestar_adjacent_middle() {
-		let regex = rule_regex("root/test**file");
+		let regex = Rule::new("root/test**file").unwrap();
 
 		assert!(regex.is_match("root/test/file"));
 		assert!(regex.is_match("root/test/a/b/c/file"));
@@ -300,7 +313,7 @@ mod rule_tests {
 
 	#[test]
 	fn doublestar_nullable() {
-		let regex = rule_regex("root/**/file");
+		let regex = Rule::new("root/**/file").unwrap();
 
 		assert!(regex.is_match("root/test/file"));
 		assert!(regex.is_match("root/file"));
@@ -309,7 +322,7 @@ mod rule_tests {
 
 	#[test]
 	fn doublestar_nullable_post() {
-		let regex = rule_regex("root/**");
+		let regex = Rule::new("root/**").unwrap();
 
 		assert!(regex.is_match("root"));
 		assert!(regex.is_match("root/file"));
@@ -318,7 +331,7 @@ mod rule_tests {
 
 	#[test]
 	fn doublestar_nullable_pre() {
-		let regex = rule_regex("**/file");
+		let regex = Rule::new("**/file").unwrap();
 
 		assert!(regex.is_match("file"));
 		assert!(regex.is_match("root/file"));
@@ -327,7 +340,7 @@ mod rule_tests {
 
 	#[test]
 	fn doublestar_bad_extension() {
-		let regex = rule_regex("**.flac");
+		let regex = Rule::new("**.flac").unwrap();
 
 		assert!(regex.is_match("root/.flac"));
 		assert!(regex.is_match("root/a/.flac"));
@@ -340,7 +353,7 @@ mod rule_tests {
 
 	#[test]
 	fn doublestar_good_extension() {
-		let regex = rule_regex("**/*.flac");
+		let regex = Rule::new("**/*.flac").unwrap();
 
 		assert!(regex.is_match("root/.flac"));
 		assert!(regex.is_match("root/a/.flac"));
@@ -353,7 +366,7 @@ mod rule_tests {
 
 	#[test]
 	fn multi_slash_a() {
-		let regex = rule_regex("dir//file.txt");
+		let regex = Rule::new("dir//file.txt").unwrap();
 
 		assert!(regex.is_match("dir/file.txt"));
 		assert!(!regex.is_match("dirfile.txt"));
@@ -362,7 +375,7 @@ mod rule_tests {
 
 	#[test]
 	fn multi_slash_b() {
-		let regex = rule_regex("**///*.txt");
+		let regex = Rule::new("**///*.txt").unwrap();
 
 		assert!(regex.is_match("dir/file.txt"));
 		assert!(regex.is_match("dir/subdir/file.txt"));
@@ -371,7 +384,7 @@ mod rule_tests {
 
 	#[test]
 	fn multi_slash_c() {
-		let regex = rule_regex("///dir//**//*.txt//");
+		let regex = Rule::new("///dir//**//*.txt//").unwrap();
 
 		assert!(regex.is_match("dir/subdir/file.txt"));
 		assert!(regex.is_match("dir/sub1/sub2/file.txt"));
