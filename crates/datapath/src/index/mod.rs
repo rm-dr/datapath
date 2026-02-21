@@ -1,5 +1,10 @@
 use itertools::Itertools;
-use std::{collections::HashMap, fmt::Display, str::FromStr, sync::Arc};
+use std::{
+	collections::{HashMap, HashSet},
+	fmt::Display,
+	str::FromStr,
+	sync::Arc,
+};
 use tracing::trace;
 use trie_rs::map::{Trie, TrieBuilder};
 
@@ -55,6 +60,7 @@ impl FromStr for PathSegment {
 #[derive(Debug)]
 pub struct DatapathIndex {
 	patterns: Trie<u8, Vec<Arc<String>>>,
+	paths: HashSet<Arc<String>>,
 	len: usize,
 }
 
@@ -90,16 +96,33 @@ impl DatapathIndex {
 		Self {
 			patterns: TrieBuilder::new().build(),
 			len: 0,
+			paths: HashSet::new(),
 		}
 	}
 
-	pub fn new<S: Into<String>, I: Iterator<Item = S>>(paths: I) -> Self {
+	pub fn new<S: Into<String>, I: Iterator<Item = S>>(sources: I, old: Option<&Self>) -> Self {
 		let mut len = 0;
 		let mut patterns = HashMap::new();
+		let mut paths = HashSet::new();
 
-		for s in paths {
+		for s in sources {
 			let s: String = s.into();
-			let s = Arc::new(s);
+
+			let s = {
+				let mut s = Arc::new(s);
+
+				// Reuse existing Arc<Strings>, if they are available.
+				// This GREATLY reduces memory usage when updating a dpi
+				// while keeping an older "snapshot" around.
+				if let Some(o) = old {
+					if let Some(existing) = o.paths.get(&s) {
+						s = existing.clone();
+					}
+				}
+
+				paths.insert(s.clone());
+				s
+			};
 
 			let mut segments = Vec::new();
 			for seg in s.split('/') {
@@ -128,17 +151,37 @@ impl DatapathIndex {
 		Self {
 			len,
 			patterns: builder.build(),
+			paths,
 		}
 	}
 
 	#[cfg(feature = "tokio")]
-	pub async fn async_new<S: Into<String>>(mut paths: tokio::sync::mpsc::Receiver<S>) -> Self {
+	pub async fn async_new<S: Into<String>>(
+		mut sources: tokio::sync::mpsc::Receiver<S>,
+		old: Option<&Self>,
+	) -> Self {
 		let mut len = 0;
 		let mut patterns = HashMap::new();
+		let mut paths = HashSet::new();
 
-		while let Some(s) = paths.recv().await {
+		while let Some(s) = sources.recv().await {
 			let s: String = s.into();
-			let s = Arc::new(s);
+
+			let s = {
+				let mut s = Arc::new(s);
+
+				// Reuse existing Arc<Strings>, if they are available.
+				// This GREATLY reduces memory usage when updating a dpi
+				// while keeping an older "snapshot" around.
+				if let Some(o) = old {
+					if let Some(existing) = o.paths.get(&s) {
+						s = existing.clone();
+					}
+				}
+
+				paths.insert(s.clone());
+				s
+			};
 
 			let mut segments = Vec::new();
 			for seg in s.split('/') {
@@ -167,6 +210,7 @@ impl DatapathIndex {
 		Self {
 			len,
 			patterns: builder.build(),
+			paths,
 		}
 	}
 
@@ -260,7 +304,7 @@ mod index_tests {
 
 	#[test]
 	fn datapath_index_empty() {
-		let idx = DatapathIndex::new(std::iter::empty::<String>());
+		let idx = DatapathIndex::new(std::iter::empty::<String>(), None);
 		let query = "web/domain=example.com";
 		assert_eq!(idx.query(query).unwrap().count(), 0);
 		assert!(idx.is_empty());
@@ -270,7 +314,7 @@ mod index_tests {
 	#[test]
 	fn insert_and_lookup_exact_match() {
 		let paths = vec!["web/domain=example.com/ts=1234"];
-		let idx = DatapathIndex::new(paths.into_iter());
+		let idx = DatapathIndex::new(paths.into_iter(), None);
 
 		// Exact match
 		let results: Vec<_> = idx
@@ -293,7 +337,7 @@ mod index_tests {
 			"web/domain=example.com/ts=1234",
 			"api/domain=example.com/ts=1234",
 		];
-		let idx = DatapathIndex::new(paths.into_iter());
+		let idx = DatapathIndex::new(paths.into_iter(), None);
 
 		// Wildcard first segment
 		let results: Vec<_> = idx.query("*/domain=example.com/ts=1234").unwrap().collect();
@@ -308,7 +352,7 @@ mod index_tests {
 			"web/domain=example.com/ts=1234",
 			"web/domain=other.com/ts=1234",
 		];
-		let idx = DatapathIndex::new(paths.into_iter());
+		let idx = DatapathIndex::new(paths.into_iter(), None);
 
 		// Wildcard domain
 		let results: Vec<_> = idx.query("web/domain=*/ts=1234").unwrap().collect();
@@ -322,7 +366,7 @@ mod index_tests {
 			"web/domain=other.com/ts=1234",
 			"api/domain=example.com/ts=5678",
 		];
-		let idx = DatapathIndex::new(paths.into_iter());
+		let idx = DatapathIndex::new(paths.into_iter(), None);
 
 		// Specific lookup
 		let results: Vec<_> = idx
@@ -351,7 +395,7 @@ mod index_tests {
 			"web/domain=other.com/ts=5678/crawl/2.5",
 			"web/domain=example.com/ts=9999/crawl/3.0",
 		];
-		let idx = DatapathIndex::new(paths.into_iter());
+		let idx = DatapathIndex::new(paths.into_iter(), None);
 
 		// Multiple wildcards in path
 		let results: Vec<_> = idx.query("web/domain=*/ts=*/crawl/*").unwrap().collect();
@@ -368,7 +412,7 @@ mod index_tests {
 	#[test]
 	fn partial_path_query() {
 		let paths = vec!["web/domain=example.com/ts=1234/crawl/2.5"];
-		let idx = DatapathIndex::new(paths.into_iter());
+		let idx = DatapathIndex::new(paths.into_iter(), None);
 
 		// Query with fewer segments than the stored path
 		let results: Vec<_> = idx.query("web/domain=example.com").unwrap().collect();
@@ -378,7 +422,7 @@ mod index_tests {
 	#[test]
 	fn longer_path_query() {
 		let paths = vec!["web/domain=example.com"];
-		let idx = DatapathIndex::new(paths.into_iter());
+		let idx = DatapathIndex::new(paths.into_iter(), None);
 
 		// Query with more segments than the stored path
 		let results: Vec<_> = idx
@@ -394,7 +438,7 @@ mod index_tests {
 			"web/domain=example.com/ts=1234",
 			"web/domain=other.com/ts=5678",
 		];
-		let idx = DatapathIndex::new(paths.into_iter());
+		let idx = DatapathIndex::new(paths.into_iter(), None);
 
 		// Match exists
 		assert_eq!(
@@ -421,7 +465,7 @@ mod index_tests {
 			"web/domain=example.com/ts=1234/file2.json",
 			"web/domain=example.com/ts=5678/file3.json",
 		];
-		let idx = DatapathIndex::new(paths.into_iter());
+		let idx = DatapathIndex::new(paths.into_iter(), None);
 
 		// Query with suffix wildcard
 		let results: Vec<_> = idx.query("web/domain=example.com/**").unwrap().collect();
