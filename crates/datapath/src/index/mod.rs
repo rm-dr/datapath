@@ -1,5 +1,5 @@
 use itertools::Itertools;
-use std::{collections::HashMap, fmt::Display, str::FromStr};
+use std::{collections::HashMap, fmt::Display, str::FromStr, sync::Arc};
 use tracing::trace;
 use trie_rs::map::{Trie, TrieBuilder};
 
@@ -54,7 +54,7 @@ impl FromStr for PathSegment {
 /// An in-memory cache of s3 paths.
 #[derive(Debug)]
 pub struct DatapathIndex {
-	patterns: Trie<u8, Vec<String>>,
+	patterns: Trie<u8, Vec<Arc<String>>>,
 	len: usize,
 }
 
@@ -99,6 +99,8 @@ impl DatapathIndex {
 
 		for s in paths {
 			let s: String = s.into();
+			let s = Arc::new(s);
+
 			let mut segments = Vec::new();
 			for seg in s.split('/') {
 				segments.push(match PathSegment::from_str(&seg) {
@@ -136,6 +138,8 @@ impl DatapathIndex {
 
 		while let Some(s) = paths.recv().await {
 			let s: String = s.into();
+			let s = Arc::new(s);
+
 			let mut segments = Vec::new();
 			for seg in s.split('/') {
 				segments.push(match PathSegment::from_str(&seg) {
@@ -181,7 +185,10 @@ impl DatapathIndex {
 	///
 	/// Returns an empty iterator if no paths match.
 	/// Returns `None` if the query was invalid.
-	pub fn query(&self, query: impl Into<String>) -> Option<impl Iterator<Item = String> + '_> {
+	pub fn query(
+		&self,
+		query: impl Into<String>,
+	) -> Option<impl Iterator<Item = &Arc<String>> + '_> {
 		let query: String = query.into();
 		let regex = rule::Rule::new(query.clone())?;
 		let key = Self::query_to_key(&query);
@@ -191,13 +198,15 @@ impl DatapathIndex {
 			self.patterns
 				.predictive_search::<String, _>(&key)
 				.flat_map(|(_, strings)| strings.iter())
-				.filter(move |s| regex.is_match(s))
-				.cloned(),
+				.filter(move |s| regex.is_match(s)),
 		)
 	}
 
 	/// Like [Self::query], but with a precompiled rule
-	pub fn query_rule<'a>(&'a self, rule: &'a rule::Rule) -> impl Iterator<Item = String> + 'a {
+	pub fn query_rule<'a>(
+		&'a self,
+		rule: &'a rule::Rule,
+	) -> impl Iterator<Item = &'a Arc<String>> + 'a {
 		let key = Self::query_to_key(rule.pattern());
 		trace!("DatapathIndex key is {key}");
 
@@ -205,7 +214,6 @@ impl DatapathIndex {
 			.predictive_search::<String, _>(&key)
 			.flat_map(|(_, strings)| strings.iter())
 			.filter(move |s| rule.is_match(s))
-			.cloned()
 	}
 
 	/// Like [Self::query], but returns `true` if any paths match
@@ -270,7 +278,7 @@ mod index_tests {
 			.unwrap()
 			.collect();
 		assert_eq!(results.len(), 1);
-		assert_eq!(results[0], "web/domain=example.com/ts=1234");
+		assert_eq!(results[0].as_ref(), "web/domain=example.com/ts=1234");
 
 		// No match
 		let results: Vec<_> = idx.query("web/domain=other.com/ts=1234").unwrap().collect();
@@ -322,12 +330,12 @@ mod index_tests {
 			.unwrap()
 			.collect();
 		assert_eq!(results.len(), 1);
-		assert_eq!(results[0], "web/domain=example.com/ts=1234");
+		assert_eq!(results[0].as_ref(), "web/domain=example.com/ts=1234");
 
 		// Wildcard time lookup
 		let results: Vec<_> = idx.query("web/domain=example.com/ts=*").unwrap().collect();
 		assert_eq!(results.len(), 1);
-		assert_eq!(results[0], "web/domain=example.com/ts=1234");
+		assert_eq!(results[0].as_ref(), "web/domain=example.com/ts=1234");
 
 		// Double wildcard lookup
 		let results: Vec<_> = idx.query("web/domain=*/ts=*").unwrap().collect();

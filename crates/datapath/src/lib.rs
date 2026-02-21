@@ -23,6 +23,9 @@ pub use schema::*;
 mod wildcardable;
 pub use wildcardable::*;
 
+mod arcsubstr;
+pub use arcsubstr::*;
+
 #[cfg(feature = "index")]
 mod index;
 
