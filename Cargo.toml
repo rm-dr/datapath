@@ -11,7 +11,7 @@ readme = "README.md"
 authors = ["rm-dr"]
 
 # Don't forget to bump datapath-macro below!
-version = "0.0.6"
+version = "0.0.8"
 
 [workspace.lints.rust]
 unused_import_braces = "deny"
@@ -70,7 +70,7 @@ cargo_common_metadata = "deny"
 #
 
 [workspace.dependencies]
-datapath-macro = { path = "crates/datapath-macro", version = "0.0.6" }
+datapath-macro = { path = "crates/datapath-macro", version = "0.0.8" }
 datapath = { path = "crates/datapath" }
 
 chrono = "0.4.42"
@@ -83,3 +83,4 @@ tracing = "0.1"
 trie-rs = "0.4.2"
 uuid = "1.19.0"
 tokio = { version = "1.48.0", features = ["sync"] }
+smartstring = "1.0.1"

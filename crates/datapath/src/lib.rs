@@ -26,10 +26,22 @@ pub use wildcardable::*;
 mod arcsubstr;
 pub use arcsubstr::*;
 
+mod rule;
+pub use rule::*;
+
+#[cfg(feature = "index")]
+pub(crate) mod segment;
+
 #[cfg(feature = "index")]
 mod index;
 
 #[cfg(feature = "index")]
 pub use index::*;
+
+#[cfg(feature = "index")]
+mod vec_index;
+
+#[cfg(feature = "index")]
+pub use vec_index::*;
 
 pub use datapath_macro::datapath;
