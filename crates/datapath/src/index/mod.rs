@@ -1,56 +1,13 @@
 use itertools::Itertools;
 use std::{
 	collections::{HashMap, HashSet},
-	fmt::Display,
 	str::FromStr,
 	sync::Arc,
 };
 use tracing::trace;
 use trie_rs::map::{Trie, TrieBuilder};
 
-mod rule;
-pub use rule::Rule;
-
-/// A path segment in an [`AnyDatapath`]
-#[derive(Debug, Clone, Hash, PartialEq, Eq)]
-enum PathSegment {
-	/// A constant value, like `web`
-	Constant(String),
-
-	/// A key=value partition, like `domain=gouletpens.com`
-	Value { key: String, value: String },
-}
-
-impl Display for PathSegment {
-	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		match self {
-			PathSegment::Constant(x) => write!(f, "{x}"),
-			PathSegment::Value { key, value } => write!(f, "{key}={value}"),
-		}
-	}
-}
-
-impl FromStr for PathSegment {
-	type Err = ();
-	fn from_str(s: &str) -> Result<Self, Self::Err> {
-		if s.contains("\n") {
-			return Err(());
-		}
-
-		if s.is_empty() {
-			return Err(());
-		}
-
-		return Ok(if s.contains("=") {
-			let mut s = s.split("=");
-			let key = s.next().ok_or(())?.to_owned();
-			let value = s.join("=");
-			Self::Value { key, value }
-		} else {
-			Self::Constant(s.to_owned())
-		});
-	}
-}
+use crate::{Rule, segment::PathSegment};
 
 //
 // MARK: index
@@ -234,7 +191,7 @@ impl DatapathIndex {
 		query: impl Into<String>,
 	) -> Option<impl Iterator<Item = &Arc<String>> + '_> {
 		let query: String = query.into();
-		let regex = rule::Rule::new(query.clone())?;
+		let regex = Rule::new(query.clone())?;
 		let key = Self::query_to_key(&query);
 		trace!("DatapathIndex key is {key}");
 
@@ -247,10 +204,7 @@ impl DatapathIndex {
 	}
 
 	/// Like [Self::query], but with a precompiled rule
-	pub fn query_rule<'a>(
-		&'a self,
-		rule: &'a rule::Rule,
-	) -> impl Iterator<Item = &'a Arc<String>> + 'a {
+	pub fn query_rule<'a>(&'a self, rule: &'a Rule) -> impl Iterator<Item = &'a Arc<String>> + 'a {
 		let key = Self::query_to_key(rule.pattern());
 		trace!("DatapathIndex key is {key}");
 
@@ -263,7 +217,7 @@ impl DatapathIndex {
 	/// Like [Self::query], but returns `true` if any paths match
 	pub fn query_match(&self, query: impl Into<String>) -> Option<bool> {
 		let query: String = query.into();
-		let regex = rule::Rule::new(query.clone())?;
+		let regex = Rule::new(query.clone())?;
 		let key = Self::query_to_key(&query);
 		trace!("DatapathIndex key is {key}");
 
@@ -279,7 +233,7 @@ impl DatapathIndex {
 	}
 
 	/// Like [Self::query_match], but with a precompiled rule
-	pub fn query_rule_match<'a>(&'a self, rule: &'a rule::Rule) -> bool {
+	pub fn query_rule_match<'a>(&'a self, rule: &'a Rule) -> bool {
 		let key = Self::query_to_key(&rule.pattern());
 		trace!("DatapathIndex key is {key}");
 
